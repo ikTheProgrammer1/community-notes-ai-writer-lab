@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <h2>Writers</h2>
+  {% if dashboards %}
+    {% for d in dashboards %}
+      <div class="card">
+        <h3><a href="/writers/{{ d.writer.id }}">{{ d.writer.name }}</a></h3>
+        <p>{{ d.writer.description or "" }}</p>
+
+        <div class="metric-row">
+          <div class="metric">
+            <div class="metric-label">Admission: High Score % (last {{ d.admission.sample_size }})</div>
+            <div class="metric-value">{{ "%.1f"|format(d.admission.high_score_pct) }}%</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Admission: Low Score %</div>
+            <div class="metric-value">{{ "%.1f"|format(d.admission.low_score_pct) }}%</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Admission: URL Pass %</div>
+            <div class="metric-value">{{ "%.1f"|format(d.admission.url_pass_pct) }}%</div>
+          </div>
+        </div>
+
+        <div class="metric-row" style="margin-top: 8px">
+          <div class="metric">
+            <div class="metric-label">Lab: Avg Score</div>
+            <div class="metric-value">
+              {% if d.lab.avg_score is not none %}
+                {{ "%.2f"|format(d.lab.avg_score) }}
+              {% else %}
+                –
+              {% endif %}
+            </div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">% ≥ Submit Threshold</div>
+            <div class="metric-value">{{ "%.1f"|format(d.lab.pct_above_submit_threshold) }}%</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Rewrites</div>
+            <div class="metric-value">{{ d.lab.rewrite_count }}</div>
+          </div>
+        </div>
+
+        <h4 style="margin-top: 16px">Recent Notes</h4>
+        {% if d.recent_notes %}
+          <table>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Stage</th>
+                <th>Score</th>
+                <th>URL</th>
+                <th>Tweet</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for n in d.recent_notes %}
+                <tr>
+                  <td>{{ n.created_at }}</td>
+                  <td>{{ n.stage }}</td>
+                  <td>
+                    {% if n.score %}
+                      {{ "%.2f"|format(n.score.claim_opinion_score) }}
+                    {% else %}
+                      –
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if n.score %}
+                      {% if n.score.url_pass %}pass{% else %}fail{% endif %}
+                    {% else %}
+                      –
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if n.tweet %}
+                      <a href="https://x.com/i/web/status/{{ n.tweet.tweet_id }}" target="_blank">
+                        {{ n.tweet.tweet_id }}
+                      </a>
+                    {% endif %}
+                  </td>
+                  <td>{{ n.text[:140] }}{% if n.text|length > 140 %}…{% endif %}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p>No notes yet.</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% else %}
+    <p>No writers configured yet.</p>
+  {% endif %}
+{% endblock %}
+
