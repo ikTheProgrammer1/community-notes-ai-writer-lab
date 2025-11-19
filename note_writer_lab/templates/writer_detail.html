@@ -62,6 +62,7 @@
             <th>URL</th>
             <th>Tweet</th>
             <th>Note</th>
+            <th>BridgeRank</th>
           </tr>
         </thead>
         <tbody>
@@ -91,6 +92,31 @@
                 {% endif %}
               </td>
               <td><code>{{ n.text }}</code></td>
+              <td>
+                {% if n.simulations %}
+                  {% set sim = n.simulations[-1] %}
+                  <div><strong>Score: {{ "%.2f"|format(sim.bridge_score) }}</strong></div>
+                  <details>
+                    <summary>Critiques</summary>
+                    <ul style="font-size: 0.8em; text-align: left;">
+                      {% for c in sim.critiques_dump %}
+                        <li>
+                          <strong>{{ c.persona_name }}</strong> ({{ c.score }}): {{ c.reasoning }}
+                        </li>
+                      {% endfor %}
+                    </ul>
+                  </details>
+                  {% if sim.bridge_score < 0.5 %}
+                    <form action="/refine/{{ n.id }}" method="post" style="margin-top: 5px;">
+                      <button type="submit">Auto-Refine 🪄</button>
+                    </form>
+                  {% endif %}
+                {% else %}
+                  <form action="/simulate/{{ n.id }}" method="post">
+                    <button type="submit">🧪 Run Sim</button>
+                  </form>
+                {% endif %}
+              </td>
             </tr>
           {% endfor %}
         </tbody>

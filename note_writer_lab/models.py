@@ -112,6 +112,9 @@ class Note(Base):
     submissions: Mapped[list["Submission"]] = relationship(
         back_populates="note", cascade="all, delete-orphan"
     )
+    simulations: Mapped[list["Simulation"]] = relationship(
+        back_populates="note", cascade="all, delete-orphan"
+    )
 
 
 class NoteScore(Base):
@@ -167,3 +170,22 @@ class Submission(Base):
     tweet: Mapped[Tweet] = relationship(back_populates="submissions")
 
 
+
+class Simulation(Base):
+    __tablename__ = "simulations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    note_id: Mapped[int] = mapped_column(
+        ForeignKey("notes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    bridge_score: Mapped[float] = mapped_column(Float, nullable=False)
+    architect_dump: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    critiques_dump: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    note: Mapped[Note] = relationship(back_populates="simulations")
