@@ -121,3 +121,31 @@ class GrokClient:
             weakness_summary=weakness_summary,
         )
         return self._chat(system_prompt, user_prompt).strip()
+
+    def generate_note_variants(self, tweet: Tweet) -> list[dict]:
+        """
+        Generates 3 variants of a note using different strategies.
+        Returns a list of dicts: [{"strategy": "Neutral", "text": "..."}, ...]
+        """
+        from .prompts import NOTE_VARIANTS_PROMPT
+        import json
+        
+        system_prompt = NOTE_VARIANTS_PROMPT
+        user_prompt = f"Tweet Text: {tweet.text}"
+        
+        response = self._chat(system_prompt, user_prompt)
+        
+        # Parse JSON
+        cleaned = response.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        if cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+            
+        try:
+            data = json.loads(cleaned.strip())
+            return data.get("variants", [])
+        except Exception:
+            return []

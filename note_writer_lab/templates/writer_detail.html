@@ -1,131 +1,166 @@
 {% extends "base.html" %}
 
 {% block content %}
-  <h2>{{ dashboard.writer.name }}</h2>
-  <p>{{ dashboard.writer.description or "" }}</p>
+<h2>{{ dashboard.writer.name }}</h2>
+<p>{{ dashboard.writer.description or "" }}</p>
 
-  <div class="card">
-    <h3>Admission Metrics (last {{ dashboard.admission.sample_size }} test notes)</h3>
-    <div class="metric-row">
-      <div class="metric">
-        <div class="metric-label">High Score %</div>
-        <div class="metric-value">{{ "%.1f"|format(dashboard.admission.high_score_pct) }}%</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Low Score %</div>
-        <div class="metric-value">{{ "%.1f"|format(dashboard.admission.low_score_pct) }}%</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">URL Pass %</div>
-        <div class="metric-value">{{ "%.1f"|format(dashboard.admission.url_pass_pct) }}%</div>
-      </div>
+<div class="card">
+  <h3>Admission Metrics (last {{ dashboard.admission.sample_size }} test notes)</h3>
+  <div class="metric-row">
+    <div class="metric">
+      <div class="metric-label">High Score %</div>
+      <div class="metric-value">{{ "%.1f"|format(dashboard.admission.high_score_pct) }}%</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Low Score %</div>
+      <div class="metric-value">{{ "%.1f"|format(dashboard.admission.low_score_pct) }}%</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">URL Pass %</div>
+      <div class="metric-value">{{ "%.1f"|format(dashboard.admission.url_pass_pct) }}%</div>
     </div>
   </div>
+</div>
 
-  <div class="card">
-    <h3>Lab Metrics</h3>
-    <div class="metric-row">
-      <div class="metric">
-        <div class="metric-label">Average Score</div>
-        <div class="metric-value">
-          {% if dashboard.lab.avg_score is not none %}
-            {{ "%.2f"|format(dashboard.lab.avg_score) }}
+<div class="card">
+  <h3>Lab Metrics</h3>
+  <div class="metric-row">
+    <div class="metric">
+      <div class="metric-label">Average Score</div>
+      <div class="metric-value">
+        {% if dashboard.lab.avg_score is not none %}
+        {{ "%.2f"|format(dashboard.lab.avg_score) }}
+        {% else %}
+        –
+        {% endif %}
+      </div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">% ≥ Submit Threshold</div>
+      <div class="metric-value">{{ "%.1f"|format(dashboard.lab.pct_above_submit_threshold) }}%</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Rewrites</div>
+      <div class="metric-value">{{ dashboard.lab.rewrite_count }}</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Total Notes</div>
+      <div class="metric-value">{{ dashboard.lab.total_notes }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Recent Notes</h3>
+  {% if dashboard.recent_notes %}
+  <table>
+    <thead>
+      <tr>
+        <th>When</th>
+        <th>Stage</th>
+        <th>Score</th>
+        <th>URL</th>
+        <th>Tweet</th>
+        <th>Note</th>
+        <th>BridgeRank</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for n in dashboard.recent_notes %}
+      <tr>
+        <td>{{ n.created_at }}</td>
+        <td>{{ n.stage }}</td>
+        <td>
+          {% if n.score %}
+          {{ "%.2f"|format(n.score.claim_opinion_score) }}
           {% else %}
-            –
+          –
           {% endif %}
-        </div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">% ≥ Submit Threshold</div>
-        <div class="metric-value">{{ "%.1f"|format(dashboard.lab.pct_above_submit_threshold) }}%</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Rewrites</div>
-        <div class="metric-value">{{ dashboard.lab.rewrite_count }}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Total Notes</div>
-        <div class="metric-value">{{ dashboard.lab.total_notes }}</div>
-      </div>
-    </div>
-  </div>
+        </td>
+        <td>
+          {% if n.score %}
+          {% if n.score.url_pass %}pass{% else %}fail{% endif %}
+          {% else %}
+          –
+          {% endif %}
+        </td>
+        <td>
+          {% if n.tweet %}
+          <a href="https://x.com/i/web/status/{{ n.tweet.tweet_id }}" target="_blank">
+            {{ n.tweet.tweet_id }}
+          </a>
+          {% endif %}
+        </td>
+        <td><code>{{ n.text }}</code></td>
+        <td>
+          {% if n.simulations %}
+          {% set sim = n.simulations[-1] %}
+          <div><strong>Score: {{ "%.2f"|format(sim.bridge_score) }}</strong></div>
+          <details>
+            <summary>Critiques</summary>
+            <ul style="font-size: 0.8em; text-align: left;">
+              {% for c in sim.critiques_dump %}
+              <li>
+                <strong>{{ c.persona_name }}</strong> ({{ c.score }}): {{ c.reasoning }}
+              </li>
+              {% endfor %}
+            </ul>
+          </details>
+          {% if sim.bridge_score < 0.5 %} <form action="/refine/{{ n.id }}" method="post" style="margin-top: 5px;">
+            <button type="submit">Auto-Refine 🪄</button>
+            </form>
+            {% endif %}
+            {% else %}
+            <form action="/simulate/{{ n.id }}" method="post">
+              <button type="submit">🧪 Run Sim</button>
+            </form>
+            {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No notes yet.</p>
+  {% endif %}
+</div>
 
-  <div class="card">
-    <h3>Recent Notes</h3>
-    {% if dashboard.recent_notes %}
-      <table>
-        <thead>
-          <tr>
-            <th>When</th>
-            <th>Stage</th>
-            <th>Score</th>
-            <th>URL</th>
-            <th>Tweet</th>
-            <th>Note</th>
-            <th>BridgeRank</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for n in dashboard.recent_notes %}
-            <tr>
-              <td>{{ n.created_at }}</td>
-              <td>{{ n.stage }}</td>
-              <td>
-                {% if n.score %}
-                  {{ "%.2f"|format(n.score.claim_opinion_score) }}
-                {% else %}
-                  –
-                {% endif %}
-              </td>
-              <td>
-                {% if n.score %}
-                  {% if n.score.url_pass %}pass{% else %}fail{% endif %}
-                {% else %}
-                  –
-                {% endif %}
-              </td>
-              <td>
-                {% if n.tweet %}
-                  <a href="https://x.com/i/web/status/{{ n.tweet.tweet_id }}" target="_blank">
-                    {{ n.tweet.tweet_id }}
-                  </a>
-                {% endif %}
-              </td>
-              <td><code>{{ n.text }}</code></td>
-              <td>
-                {% if n.simulations %}
-                  {% set sim = n.simulations[-1] %}
-                  <div><strong>Score: {{ "%.2f"|format(sim.bridge_score) }}</strong></div>
-                  <details>
-                    <summary>Critiques</summary>
-                    <ul style="font-size: 0.8em; text-align: left;">
-                      {% for c in sim.critiques_dump %}
-                        <li>
-                          <strong>{{ c.persona_name }}</strong> ({{ c.score }}): {{ c.reasoning }}
-                        </li>
-                      {% endfor %}
-                    </ul>
-                  </details>
-                  {% if sim.bridge_score < 0.5 %}
-                    <form action="/refine/{{ n.id }}" method="post" style="margin-top: 5px;">
-                      <button type="submit">Auto-Refine 🪄</button>
-                    </form>
-                  {% endif %}
-                {% else %}
-                  <form action="/simulate/{{ n.id }}" method="post">
-                    <button type="submit">🧪 Run Sim</button>
-                  </form>
-                {% endif %}
-              </td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <p>No notes yet.</p>
-    {% endif %}
-  </div>
-
-  <p><a href="/">← Back to writers</a></p>
+<p><a href="/">← Back to writers</a></p>
 {% endblock %}
 
+{% block scripts %}
+<script>
+  // Check for error query param
+  const urlParams = new URLSearchParams(window.location.search);
+  const errorMsg = urlParams.get('error');
+  if (errorMsg) {
+    const alertDiv = document.createElement('div');
+    alertDiv.style.padding = '10px';
+    alertDiv.style.backgroundColor = '#f8d7da';
+    alertDiv.style.color = '#721c24';
+    alertDiv.style.marginBottom = '20px';
+    alertDiv.style.borderRadius = '5px';
+    alertDiv.innerText = 'Error: ' + errorMsg;
+
+    const contentBlock = document.querySelector('.content');
+    if (contentBlock) {
+      contentBlock.insertBefore(alertDiv, contentBlock.firstChild);
+    } else {
+      document.body.insertBefore(alertDiv, document.body.firstChild);
+    }
+  }
+
+  // Loading state for forms
+  document.querySelectorAll('form').forEach(form => {
+    form.addEventListener('submit', function (e) {
+      const btn = this.querySelector('button[type="submit"]');
+      if (btn && !btn.disabled) {
+        const originalText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = 'Running...';
+        // Optional: Add a spinner or similar here
+      }
+    });
+  });
+</script>
+{% endblock %}

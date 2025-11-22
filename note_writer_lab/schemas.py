@@ -14,6 +14,8 @@ class Critique(BaseModel):
     persona_name: str = Field(..., description="Name of the persona providing the critique")
     score: float = Field(..., description="Helpfulness score between 0.0 and 1.0", ge=0.0, le=1.0)
     reasoning: str = Field(..., description="One sentence explanation of the score")
+    strengths: List[str] = Field(default_factory=list, description="List of 2 key strengths (e.g. 'Neutral tone', 'Cites sources')")
+    weaknesses: List[str] = Field(default_factory=list, description="List of 2 key weaknesses (e.g. 'Lacks citations', 'Biased language')")
 
 class RefinementOutput(BaseModel):
     rewritten_note: str = Field(..., description="The rewritten note text")

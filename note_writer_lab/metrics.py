@@ -141,3 +141,26 @@ def build_writer_dashboard(
         recent_notes=recent_notes,
     )
 
+
+def calculate_bridge_score(scores: List[float], penalty_factor: float = 1.5) -> float:
+    """
+    Calculates the BridgeScore based on the formula:
+    Score = Mean(Ratings) - (Penalty_Factor * Standard_Deviation)
+    
+    Args:
+        scores: List of float scores (0.0 - 1.0)
+        penalty_factor: Factor to penalize variance (default 1.5)
+        
+    Returns:
+        float: The calculated BridgeScore (clamped 0.0 - 1.0)
+    """
+    if not scores:
+        return 0.0
+        
+    n = len(scores)
+    mean = sum(scores) / n
+    variance = sum((s - mean) ** 2 for s in scores) / n
+    std_dev = variance ** 0.5
+    
+    raw_score = mean - (penalty_factor * std_dev)
+    return max(0.0, min(1.0, raw_score))

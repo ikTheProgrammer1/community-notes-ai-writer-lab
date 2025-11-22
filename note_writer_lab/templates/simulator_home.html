@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="simulator-container">
+    <div class="hero-section">
+        <h1 class="gradient-text">BridgeRank Simulator</h1>
+        <p class="subtitle">Test your notes against the Council of diverse perspectives.</p>
+    </div>
+
+    <div class="input-section">
+        <form action="/simulator/run" method="post" class="sim-form">
+            <div class="form-group">
+                <label for="tweet_text">The Tweet (Claim)</label>
+                <textarea name="tweet_text" id="tweet_text" rows="3" placeholder="Paste the tweet or claim here..."
+                    required></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="note_text">Your Draft Note</label>
+                <textarea name="note_text" id="note_text" rows="4" placeholder="Draft your Community Note here..."
+                    required></textarea>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" id="run_btn" class="btn btn-primary" disabled>
+                    Run Simulation
+                </button>
+            </div>
+        </form>
+
+        <script>
+            const tweetInput = document.getElementById('tweet_text');
+            const noteInput = document.getElementById('note_text');
+            const runBtn = document.getElementById('run_btn');
+
+            function checkInputs() {
+                if (tweetInput.value.trim() && noteInput.value.trim()) {
+                    runBtn.disabled = false;
+                } else {
+                    runBtn.disabled = true;
+                }
+            }
+
+            tweetInput.addEventListener('input', checkInputs);
+            noteInput.addEventListener('input', checkInputs);
+
+            // Initial check in case fields are pre-filled (e.g., by browser)
+            checkInputs();
+
+            // Loading state
+            document.querySelector('form').addEventListener('submit', function () {
+                runBtn.disabled = true;
+                runBtn.innerHTML = `Running Simulation...`;
+                runBtn.style.opacity = '0.7';
+            });
+        </script>
+    </div>
+
+    <div class="scenarios-section">
+        <h2>Quick-Start Scenarios</h2>
+        <div class="scenario-grid">
+            <div class="card scenario-card" onclick="fillScenario('polarization')">
+                <div class="card-icon">🔥</div>
+                <h3>Political Polarization</h3>
+                <p>Test a highly divisive political claim.</p>
+            </div>
+            <div class="card scenario-card" onclick="fillScenario('bridge')">
+                <div class="card-icon">🌉</div>
+                <h3>Successful Bridge</h3>
+                <p>See how a well-sourced note scores.</p>
+            </div>
+            <div class="card scenario-card" onclick="fillScenario('hallucination')">
+                <div class="card-icon">👻</div>
+                <h3>Hallucination</h3>
+                <p>Test a plausible but false claim.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .simulator-container {
+        max-width: 700px;
+        margin: 0 auto;
+        text-align: center;
+    }
+
+    .hero-section {
+        margin-bottom: 48px;
+    }
+
+    .hero-section h1 {
+        font-size: 48px;
+        margin-bottom: 16px;
+    }
+
+    .subtitle {
+        font-size: 18px;
+        max-width: 500px;
+        margin: 0 auto;
+    }
+
+    .sim-form {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg);
+        padding: 32px;
+        margin-bottom: 64px;
+        text-align: left;
+        box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.5);
+    }
+
+    .form-group {
+        margin-bottom: 24px;
+    }
+
+    .form-actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 32px;
+    }
+
+    .btn-primary {
+        min-width: 160px;
+        height: 48px;
+        font-size: 16px;
+    }
+
+    .scenarios-section h2 {
+        font-size: 20px;
+        margin-bottom: 32px;
+        color: var(--text-muted);
+        font-weight: 500;
+        font-family: var(--font-sans);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .scenario-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 24px;
+    }
+
+    .scenario-card {
+        cursor: pointer;
+        text-align: left;
+        padding: 24px;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .scenario-card:hover {
+        border-color: var(--text-muted);
+        transform: translateY(-2px);
+    }
+
+    .card-icon {
+        font-size: 24px;
+        margin-bottom: 16px;
+    }
+
+    .scenario-card h3 {
+        font-size: 16px;
+        margin-bottom: 8px;
+        font-family: var(--font-sans);
+        font-weight: 600;
+    }
+
+    .scenario-card p {
+        font-size: 14px;
+        margin: 0;
+        line-height: 1.5;
+    }
+</style>
+
+<script>
+    function fillScenario(type) {
+        const textarea = document.querySelector('textarea');
+        if (type === 'polarization') {
+            textarea.value = "The election was obviously stolen. Anyone who says otherwise is part of the deep state coverup.";
+        } else if (type === 'bridge') {
+            textarea.value = "New study shows that coffee consumption is linked to longer life expectancy, though researchers warn that correlation does not equal causation.";
+        } else if (type === 'hallucination') {
+            textarea.value = "The Eiffel Tower was originally intended to be a temporary installation for the 1992 Barcelona Olympics but was moved to Paris.";
+        }
+        // Trigger input event to enable button
+        textarea.dispatchEvent(new Event('input'));
+    }
+</script>
+{% endblock %}

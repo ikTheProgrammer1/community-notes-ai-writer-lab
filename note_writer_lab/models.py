@@ -115,6 +115,9 @@ class Note(Base):
     simulations: Mapped[list["Simulation"]] = relationship(
         back_populates="note", cascade="all, delete-orphan"
     )
+    simulation_runs: Mapped[list["SimulationRun"]] = relationship(
+        back_populates="note", cascade="all, delete-orphan"
+    )
 
 
 class NoteScore(Base):
@@ -170,6 +173,74 @@ class Submission(Base):
     tweet: Mapped[Tweet] = relationship(back_populates="submissions")
 
 
+class GoldStandardCase(Base):
+    """
+    A 'ground truth' case from Community Notes history used for calibration.
+    """
+    __tablename__ = "gold_standard_cases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tweet_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    tweet_text: Mapped[str] = mapped_column(Text, nullable=False)
+    note_id: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), nullable=False)  # HELPFUL, NOT_HELPFUL
+    original_rating_status: Mapped[str] = mapped_column(String(64), nullable=True) # e.g. "HELPFUL_INFORMED"
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SimulationRun(Base):
+    """
+    M2: A full run of the BridgeRank simulator on a note.
+    Replaces/Enhances the M1 'Simulation' concept.
+    """
+    __tablename__ = "simulation_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    note_id: Mapped[int] = mapped_column(
+        ForeignKey("notes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    
+    bridge_score: Mapped[float] = mapped_column(Float, nullable=False)
+    consensus_status: Mapped[str] = mapped_column(String(32), nullable=True) # e.g. "LIKELY_HELPFUL"
+    
+    # Metadata about the run
+    model_used: Mapped[str] = mapped_column(String(64), nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    note: Mapped["Note"] = relationship(back_populates="simulation_runs")
+    persona_feedbacks: Mapped[list["PersonaFeedback"]] = relationship(
+        back_populates="simulation_run", cascade="all, delete-orphan"
+    )
+
+
+class PersonaFeedback(Base):
+    """
+    Individual critique from a specific persona in a simulation run.
+    """
+    __tablename__ = "persona_feedbacks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    simulation_run_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    
+    persona_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False) # 0.0 - 1.0
+    critique: Mapped[str] = mapped_column(Text, nullable=False)
+    missing_context: Mapped[bool] = mapped_column(Boolean, default=False)
+    
+    strengths: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
+    weaknesses: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
+
+    simulation_run: Mapped["SimulationRun"] = relationship(back_populates="persona_feedbacks")
+
 
 class Simulation(Base):
     __tablename__ = "simulations"
@@ -189,3 +260,4 @@ class Simulation(Base):
     )
 
     note: Mapped[Note] = relationship(back_populates="simulations")
+

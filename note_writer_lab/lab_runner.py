@@ -85,6 +85,12 @@ def _run_for_writer(
     grok_client: GrokClient,
     evaluator: NoteEvaluator,
 ) -> None:
+    from .simulator import BridgeRankSimulator
+    from .researcher import GroundingClient
+    
+    simulator = BridgeRankSimulator(db=session, grok_client=grok_client)
+    researcher = GroundingClient(grok_client=grok_client)
+
     max_notes = min(
         writer.max_notes_per_run, settings.max_notes_per_writer_per_run
     )
@@ -95,79 +101,89 @@ def _run_for_writer(
         tweet = upsert_tweet(session, tweet_data)
         session.flush()
 
-        draft_text = grok_client.generate_note(tweet=tweet, writer=writer)
+        # Step 1: Architect - Generate 3 Variants
+        variants = grok_client.generate_note_variants(tweet)
+        if not variants:
+            # Fallback to single note generation if variants fail
+            text = grok_client.generate_note(tweet, writer)
+            variants = [{"strategy": "Legacy", "text": text}]
 
-        draft_note = Note(
-            writer=writer,
-            tweet=tweet,
-            stage="draft",
-            text=draft_text,
-        )
-        session.add(draft_note)
-        session.flush()
-
-        draft_eval = evaluator.evaluate(draft_note, tweet)
-        draft_score = NoteScore(
-            note=draft_note,
-            claim_opinion_score=draft_eval.claim_opinion_score,
-            url_pass=draft_eval.url_pass,
-            raw_payload=draft_eval.raw_payload,
-        )
-        session.add(draft_score)
-        session.flush()
-
-        best_note = draft_note
-        best_eval = draft_eval
-
-        if (
-            writer.rewrite_min_score is not None
-            and draft_eval.claim_opinion_score < writer.submit_min_score
-            and draft_eval.claim_opinion_score >= writer.rewrite_min_score
-        ):
-            weakness = (
-                f"Initial claim_opinion_score={draft_eval.claim_opinion_score:.2f}, "
-                f"url_pass={draft_eval.url_pass} "
-                f"(urls={draft_eval.url_count}, invalid={draft_eval.invalid_url_count})."
-            )
-            rewrite_text = grok_client.rewrite_note(
-                tweet=tweet,
-                writer=writer,
-                current_note=draft_note.text,
-                weakness_summary=weakness,
-            )
-
-            rewrite_note = Note(
+        candidate_notes = []
+        
+        for variant in variants:
+            strategy = variant.get("strategy", "Unknown")
+            text = variant.get("text", "")
+            
+            # Create Draft Note
+            draft_note = Note(
                 writer=writer,
                 tweet=tweet,
-                stage="rewrite",
-                text=rewrite_text,
-                parent_note=draft_note,
+                stage="draft",
+                text=text,
             )
-            session.add(rewrite_note)
+            session.add(draft_note)
             session.flush()
+            
+            # Step 2: Grounding (Extract Claims & Verify)
+            # For now, we just log claims, but in future we can use them to filter
+            claims = researcher.extract_claims(text)
+            # verify_url logic can be added here if note has links
+            
+            # Step 3: Simulation (The Council)
+            simulation_run = simulator.run_simulation(draft_note)
+            
+            candidate_notes.append({
+                "note": draft_note,
+                "score": simulation_run.bridge_score,
+                "run": simulation_run
+            })
 
-            rewrite_eval = evaluator.evaluate(rewrite_note, tweet)
-            rewrite_score = NoteScore(
-                note=rewrite_note,
-                claim_opinion_score=rewrite_eval.claim_opinion_score,
-                url_pass=rewrite_eval.url_pass,
-                raw_payload=rewrite_eval.raw_payload,
-            )
-            session.add(rewrite_score)
-            session.flush()
+        # Step 4: Refinement
+        # Identify lowest scored draft to refine
+        if candidate_notes:
+            candidate_notes.sort(key=lambda x: x["score"])
+            worst_candidate = candidate_notes[0]
+            
+            # Refine the worst one
+            refined_note = simulator.run_refiner(worst_candidate["note"], worst_candidate["run"])
+            
+            # Simulate the refined note
+            refined_run = simulator.run_simulation(refined_note)
+            
+            candidate_notes.append({
+                "note": refined_note,
+                "score": refined_run.bridge_score,
+                "run": refined_run
+            })
 
-            if rewrite_eval.claim_opinion_score > best_eval.claim_opinion_score:
-                best_note = rewrite_note
-                best_eval = rewrite_eval
+        # Step 5: Selection & Submission
+        # Pick the absolute best note
+        candidate_notes.sort(key=lambda x: x["score"], reverse=True)
+        best_candidate = candidate_notes[0]
+        best_note = best_candidate["note"]
+        best_score = best_candidate["score"]
+        
+        # Evaluate with legacy evaluator for metadata (url_pass etc)
+        # We still need NoteScore for dashboard compatibility
+        best_eval = evaluator.evaluate(best_note, tweet)
+        best_note_score = NoteScore(
+            note=best_note,
+            claim_opinion_score=best_eval.claim_opinion_score, # Legacy score
+            url_pass=best_eval.url_pass,
+            raw_payload=best_eval.raw_payload,
+        )
+        session.add(best_note_score)
+        session.flush()
 
-        if (
-            best_eval.claim_opinion_score >= writer.submit_min_score
-            and best_eval.url_pass
-            and best_eval.url_count > 0
-        ):
+        # Submit if BridgeScore is high enough (e.g. > 0.6)
+        # Using a hardcoded threshold for M2 or writer config?
+        # Let's use writer.submit_min_score but mapped to BridgeScore?
+        # Or just use a fixed 0.6 for now as per blueprint "Likely Helpful"
+        submit_threshold = 0.6
+        
+        if best_score >= submit_threshold:
             from .models import Submission  # local import to avoid cycle
 
-            # Choose misleading_tags based on the final tweet + note.
             tags = choose_misleading_tags(tweet=tweet, note=best_note)
 
             try:
@@ -186,9 +202,7 @@ def _run_for_writer(
                     status="submitted",
                     api_response=resp,
                 )
-            except Exception as exc:  # pragma: no cover - network failure path
-                # Capture both the high-level error and any response body to
-                # make debugging payload issues easier.
+            except Exception as exc:
                 body = ""
                 response = getattr(exc, "response", None)
                 if response is not None:

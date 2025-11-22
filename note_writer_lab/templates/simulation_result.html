@@ -1,0 +1,372 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="result-container">
+    <div class="header-section">
+        <a href="/" class="back-link">← Back to Simulator</a>
+        <h1>Simulation Results</h1>
+
+        <div class="tweet-preview">
+            <h3 class="label">The Tweet (Claim)</h3>
+            <p class="tweet-text">{{ tweet_text }}</p>
+        </div>
+    </div>
+
+    <div class="score-card card">
+        <div class="score-visual">
+            <svg viewBox="0 0 36 36" class="circular-chart">
+                <path class="circle-bg" d="M18 2.0845
+                       a 15.9155 15.9155 0 0 1 0 31.831
+                       a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path class="circle" stroke-dasharray="{{ bridge_score * 100 }}, 100" d="M18 2.0845
+                       a 15.9155 15.9155 0 0 1 0 31.831
+                       a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <text x="18" y="20.35" class="percentage">{{ "%.0f"|format(bridge_score * 100) }}</text>
+            </svg>
+            <span class="score-label">BridgeScore</span>
+        </div>
+
+        <div class="score-details">
+            {% set score_val = bridge_score * 100 %}
+            {% if score_val < 40 %} <h2 class="status-danger">High Risk</h2>
+                <p>Likely to be rated Not Helpful. Needs significant changes to tone and sourcing.</p>
+                {% elif score_val < 70 %} <h2 class="status-warning">Borderline</h2>
+                    <p>Might work but needs refinement. Focus on neutral tone and verifiable sources.</p>
+                    {% else %}
+                    <h2 class="status-success">Strong</h2>
+                    <p>Likely to get helpful cross-group consensus. Well done.</p>
+                    {% endif %}
+        </div>
+    </div>
+
+    <div class="council-section">
+        <h2>The Council's Verdict</h2>
+        <div class="council-grid">
+            {% for feedback in feedbacks %}
+            <div class="card persona-card">
+                <div class="persona-header">
+                    <div class="persona-avatar">{{ feedback.persona_name[0] }}</div>
+                    <div class="persona-info">
+                        <h3>{{ feedback.persona_name }}</h3>
+                        <span class="persona-score {{ 'high' if feedback.score > 0.7 else 'low' }}">
+                            {{ "%.1f"|format(feedback.score) }}
+                        </span>
+                    </div>
+                </div>
+                <p class="persona-critique">"{{ feedback.critique }}"</p>
+
+                {% if feedback.strengths %}
+                <div class="feedback-list">
+                    <h4 class="status-success">Strengths</h4>
+                    <ul>
+                        {% for strength in feedback.strengths %}
+                        <li>{{ strength }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+
+                {% if feedback.weaknesses %}
+                <div class="feedback-list">
+                    <h4 class="status-danger">Weaknesses</h4>
+                    <ul>
+                        {% for weakness in feedback.weaknesses %}
+                        <li>{{ weakness }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="evolution-section">
+        <h2>Auto-Refine</h2>
+        <div class="comparison-view">
+            <div class="note-version card">
+                <div class="version-header">
+                    <h3>Original Draft</h3>
+                    <span class="badge">Score: {{ "%.0f"|format(bridge_score * 100) }}</span>
+                </div>
+                <div class="note-text">{{ original_note }}</div>
+            </div>
+
+            <div class="arrow">→</div>
+
+            <div class="note-version final card">
+                <div class="version-header">
+                    <h3>Refined Note</h3>
+                    <span class="badge badge-success">Score: {{ "%.0f"|format(refined_score * 100) }}</span>
+                </div>
+                <div class="note-text">{{ refined_note }}</div>
+
+                {% if refined_score > bridge_score %}
+                <div class="improvement-tag">
+                    +{{ "%.0f"|format((refined_score - bridge_score) * 100) }} points improvement
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .result-container {
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    .header-section {
+        margin-bottom: 48px;
+    }
+
+    .back-link {
+        display: inline-block;
+        margin-bottom: 24px;
+        font-size: 14px;
+        font-weight: 500;
+    }
+
+    .tweet-preview {
+        margin-top: 24px;
+        padding: 24px;
+        background: var(--bg-panel);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md);
+    }
+
+    .label {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-muted);
+        margin-bottom: 8px;
+    }
+
+    .tweet-text {
+        font-size: 18px;
+        color: var(--text-main);
+        margin: 0;
+    }
+
+    /* Score Card */
+    .score-card {
+        display: flex;
+        align-items: center;
+        gap: 48px;
+        margin-bottom: 64px;
+        padding: 40px;
+    }
+
+    .score-visual {
+        width: 120px;
+        text-align: center;
+        flex-shrink: 0;
+    }
+
+    .circular-chart {
+        display: block;
+        margin: 0 auto;
+        max-width: 100%;
+        max-height: 250px;
+    }
+
+    .circle-bg {
+        fill: none;
+        stroke: var(--border-subtle);
+        stroke-width: 2.5;
+    }
+
+    .circle {
+        fill: none;
+        stroke: var(--accent-primary);
+        stroke-width: 2.5;
+        stroke-linecap: round;
+        animation: progress 1s ease-out forwards;
+    }
+
+    .percentage {
+        fill: var(--text-main);
+        font-family: var(--font-display);
+        font-weight: bold;
+        font-size: 10px;
+        text-anchor: middle;
+    }
+
+    .score-label {
+        display: block;
+        margin-top: 8px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-muted);
+        font-weight: 600;
+    }
+
+    .score-details h2 {
+        font-size: 32px;
+        margin-bottom: 8px;
+    }
+
+    .status-danger {
+        color: var(--accent-danger);
+    }
+
+    .status-warning {
+        color: var(--accent-secondary);
+    }
+
+    .status-success {
+        color: var(--accent-primary);
+    }
+
+    /* Council Grid */
+    .council-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 24px;
+        margin-bottom: 64px;
+    }
+
+    .persona-card {
+        height: 100%;
+    }
+
+    .persona-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .persona-avatar {
+        width: 32px;
+        height: 32px;
+        background: var(--bg-panel);
+        border: 1px solid var(--border-subtle);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 14px;
+        color: var(--text-muted);
+    }
+
+    .persona-info h3 {
+        font-size: 15px;
+        margin: 0;
+    }
+
+    .persona-score {
+        margin-left: auto;
+        font-family: var(--font-mono);
+        font-weight: bold;
+        font-size: 14px;
+    }
+
+    .persona-critique {
+        font-style: italic;
+        color: var(--text-muted);
+        margin-bottom: 24px;
+        font-size: 15px;
+    }
+
+    .feedback-list h4 {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 8px;
+    }
+
+    .feedback-list ul {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 16px 0;
+    }
+
+    .feedback-list li {
+        font-size: 13px;
+        color: var(--text-muted);
+        margin-bottom: 4px;
+        padding-left: 12px;
+        position: relative;
+    }
+
+    .feedback-list li::before {
+        content: "•";
+        position: absolute;
+        left: 0;
+        color: var(--border-focus);
+    }
+
+    /* Evolution */
+    .comparison-view {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 24px;
+        align-items: flex-start;
+    }
+
+    .version-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
+    .version-header h3 {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0;
+    }
+
+    .badge {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        padding: 4px 8px;
+        background: var(--bg-panel);
+        border-radius: 4px;
+        color: var(--text-muted);
+    }
+
+    .badge-success {
+        background: rgba(45, 212, 191, 0.1);
+        color: var(--accent-primary);
+    }
+
+    .note-text {
+        font-size: 15px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+    }
+
+    .note-version.final {
+        border-color: var(--accent-primary);
+        box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.1);
+    }
+
+    .arrow {
+        align-self: center;
+        color: var(--text-muted);
+        font-size: 24px;
+    }
+
+    .improvement-tag {
+        margin-top: 16px;
+        text-align: center;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--accent-primary);
+    }
+
+    @keyframes progress {
+        0% {
+            stroke-dasharray: 0, 100;
+        }
+    }
+</style>
+{% endblock %}

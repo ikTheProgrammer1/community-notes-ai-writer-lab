@@ -1,17 +1,18 @@
 import json
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from sqlalchemy.orm import Session
 
 from .grok_client import GrokClient
-from .models import Note, Simulation, Tweet
+from .models import Note, SimulationRun, PersonaFeedback, Tweet
 from .prompts import (
     ARCHITECT_SYSTEM_PROMPT,
     REFINER_SYSTEM_PROMPT,
-    SIMULATOR_SYSTEM_PROMPT,
+    PERSONA_PROMPTS,
 )
-from .schemas import ArchitectOutput, Critique, Persona, RefinementOutput
+from .schemas import ArchitectOutput, RefinementOutput
+from .metrics import calculate_bridge_score
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,6 @@ class BridgeRankSimulator:
 
     def _parse_json_response(self, response_text: str) -> dict:
         """Helper to robustly parse JSON from LLM response."""
-        # Strip markdown code blocks if present
         cleaned = response_text.strip()
         if cleaned.startswith("```json"):
             cleaned = cleaned[7:]
@@ -31,10 +31,14 @@ class BridgeRankSimulator:
             cleaned = cleaned[3:]
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
-        return json.loads(cleaned.strip())
+        try:
+            return json.loads(cleaned.strip())
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse JSON: {cleaned}")
+            return {}
 
     def run_architect(self, tweet_text: str) -> ArchitectOutput:
-        """Step 1: Analyze tweet and generate personas."""
+        """Step 1: Analyze tweet and generate personas (Legacy/Optional in M2)."""
         logger.info("Running Architect on tweet...")
         response = self.grok._chat(
             system_prompt=ARCHITECT_SYSTEM_PROMPT,
@@ -43,66 +47,93 @@ class BridgeRankSimulator:
         data = self._parse_json_response(response)
         return ArchitectOutput(**data)
 
-    def run_simulation(self, note: Note, personas: List[Persona]) -> Simulation:
-        """Step 2: Run the simulation with the given personas."""
-        logger.info(f"Running Simulation for note {note.id} with {len(personas)} personas...")
+    def run_simulation(self, note: Note) -> SimulationRun:
+        """Step 2: Run the simulation with the Council (5 Personas)."""
+        logger.info(f"Running Simulation for note {note.id} with The Council...")
         
-        critiques = []
+        feedbacks = []
         scores = []
 
-        for persona in personas:
-            user_prompt = (
-                f"Persona Name: {persona.name}\n"
-                f"Core Motivation: {persona.core_motivation}\n"
-                f"Critique Criteria: {', '.join(persona.critique_criteria)}\n\n"
-                f"Draft Note: {note.text}"
-            )
+        for name, system_prompt in PERSONA_PROMPTS.items():
+            user_prompt = f"Draft Note: {note.text}"
             
-            response = self.grok._chat(
-                system_prompt=SIMULATOR_SYSTEM_PROMPT,
-                user_prompt=user_prompt,
-            )
-            
-            data = self._parse_json_response(response)
-            # Ensure persona name matches what we expect, or just trust the LLM?
-            # Let's enforce the name from the loop to be safe in our record
-            data["persona_name"] = persona.name 
-            
-            critique = Critique(**data)
-            critiques.append(critique)
-            scores.append(critique.score)
+            try:
+                response = self.grok._chat(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
+                data = self._parse_json_response(response)
+                
+                score = float(data.get("score", 0.0))
+                critique = data.get("reasoning", "No reasoning provided.")
+                missing_context = data.get("missing_context", False)
+                strengths = data.get("strengths", [])
+                weaknesses = data.get("weaknesses", [])
+                
+                feedback = PersonaFeedback(
+                    persona_name=name,
+                    score=score,
+                    critique=critique,
+                    missing_context=missing_context,
+                    strengths=strengths,
+                    weaknesses=weaknesses
+                )
+                feedbacks.append(feedback)
+                scores.append(score)
+            except Exception as e:
+                logger.error(f"Error simulating persona {name}: {e}")
+                # Add a default failure feedback to avoid crashing
+                feedbacks.append(PersonaFeedback(
+                    persona_name=name,
+                    score=0.0,
+                    critique="Error during simulation.",
+                    missing_context=True
+                ))
+                scores.append(0.0)
 
         # Calculate BridgeScore
-        avg_score = sum(scores) / len(scores)
-        variance = sum((s - avg_score) ** 2 for s in scores) / len(scores)
-        penalty_factor = 0.5  # Tunable parameter
-        bridge_score = max(0.0, avg_score - (variance * penalty_factor))
+        bridge_score = calculate_bridge_score(scores, penalty_factor=1.0)
+        
+        consensus_status = "LIKELY_HELPFUL" if bridge_score > 0.6 else "NEEDS_WORK"
+        if bridge_score < 0.4:
+            consensus_status = "NOT_HELPFUL"
 
         # Save to DB
-        simulation = Simulation(
+        simulation_run = SimulationRun(
             note_id=note.id,
             bridge_score=bridge_score,
-            architect_dump=ArchitectOutput(analysis="Generated during simulation", personas=personas).model_dump(),
-            critiques_dump=[c.model_dump() for c in critiques],
+            consensus_status=consensus_status,
+            model_used=self.grok.model,
+            persona_feedbacks=feedbacks
         )
-        self.db.add(simulation)
+        self.db.add(simulation_run)
         self.db.commit()
-        self.db.refresh(simulation)
+        self.db.refresh(simulation_run)
         
-        return simulation
+        return simulation_run
 
-    def run_refiner(self, note: Note, simulation: Simulation) -> Note:
+    def run_refiner(self, note: Note, simulation_run: SimulationRun) -> Note:
         """Step 3: Auto-refine the note based on critiques."""
         logger.info(f"Running Refiner for note {note.id}...")
         
-        critiques_text = "\n".join(
-            [f"- {c['persona_name']}: {c['reasoning']} (Score: {c['score']})" 
-             for c in simulation.critiques_dump]
+        # Find the harshest critique
+        sorted_feedbacks = sorted(simulation_run.persona_feedbacks, key=lambda x: x.score)
+        harshest = sorted_feedbacks[0] if sorted_feedbacks else None
+        
+        critiques_text = ""
+        if harshest:
+             critiques_text = f"Major Critique from {harshest.persona_name}: {harshest.critique}"
+        
+        # Include all critiques for context
+        full_critiques = "\n".join(
+            [f"- {f.persona_name}: {f.critique} (Score: {f.score})" 
+             for f in simulation_run.persona_feedbacks]
         )
         
         user_prompt = (
             f"Original Note: {note.text}\n\n"
-            f"Critiques:\n{critiques_text}"
+            f"Critiques:\n{full_critiques}\n\n"
+            f"Focus specifically on addressing this critique: {critiques_text}"
         )
         
         response = self.grok._chat(
