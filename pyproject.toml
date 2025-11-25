@@ -17,6 +17,8 @@ dependencies = [
     "pytest>=9.0.1",
     "pandas>=2.3.3",
     "python-multipart>=0.0.20",
+    "openai>=2.8.1",
+    "xai-sdk>=1.4.0",
 ]
 
 [project.scripts]

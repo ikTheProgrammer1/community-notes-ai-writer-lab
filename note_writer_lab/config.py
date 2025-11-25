@@ -58,6 +58,9 @@ class Settings:
     x_submit_note_url: Optional[str] = getenv_str(
         "X_COMMUNITY_NOTES_SUBMIT_URL"
     )
+    x_evaluate_note_url: Optional[str] = getenv_str(
+        "X_EVALUATE_NOTE_URL"
+    )
 
     # Grok / xAI
     # Prefer GROK_API_KEY, but also accept XAI_API_KEY for compatibility.

@@ -4,11 +4,14 @@ from typing import Any, Dict, List, Optional
 
 import os
 import re
+import logging
 import requests
 from requests_oauthlib import OAuth1
 
 from .config import settings
 from .evaluator import URL_REGEX
+
+logger = logging.getLogger(__name__)
 
 
 NOTE_TEXT_URL_PATTERN = re.compile(r"https?://\S+")
@@ -361,3 +364,157 @@ class XClient:
         )
         response.raise_for_status()
         return response.json()
+
+    @staticmethod
+    def parse_admission_scores(api_response: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Parses the raw API response from a test_mode submission to extract
+        admission-relevant scores.
+        """
+        # Default safe values
+        scores = {
+            "url_validity_score": 0.0,
+            "claim_opinion_score": 0.0,
+            "harassment_abuse_score": 0.0,
+            "api_feedback_raw": api_response
+        }
+
+        # Try to extract from likely paths (adjust based on actual API response)
+        # Path 1: Root level keys (common in some endpoints)
+        if "url_validity_score" in api_response:
+            scores["url_validity_score"] = float(api_response.get("url_validity_score", 0.0))
+        
+        if "claim_opinion_score" in api_response:
+            scores["claim_opinion_score"] = float(api_response.get("claim_opinion_score", 0.0))
+
+        if "harassment_abuse_score" in api_response:
+            scores["harassment_abuse_score"] = float(api_response.get("harassment_abuse_score", 0.0))
+
+        # Path 2: Nested in 'note_evaluation' or similar
+        eval_data = api_response.get("note_evaluation", {}) or api_response.get("evaluation", {})
+        if eval_data:
+            if "urlValidity" in eval_data:
+                 scores["url_validity_score"] = float(eval_data.get("urlValidity", 0.0))
+            if "claimOpinion" in eval_data:
+                 scores["claim_opinion_score"] = float(eval_data.get("claimOpinion", 0.0))
+            if "harassmentAbuse" in eval_data:
+                 scores["harassment_abuse_score"] = float(eval_data.get("harassmentAbuse", 0.0))
+
+        return scores
+
+    @staticmethod
+    def extract_tweet_id(url: str) -> Optional[str]:
+        """
+        Extracts the Tweet ID from a standard X/Twitter URL.
+        Supports:
+        - https://x.com/user/status/123456789
+        - https://twitter.com/user/status/123456789
+        """
+        match = re.search(r"status/(\d+)", url)
+        if match:
+            return match.group(1)
+        return None
+
+    def fetch_tweet_text(self, tweet_id: str) -> Optional[str]:
+        """
+        Fetches the text of a tweet by its ID.
+        """
+        if not self._oauth1_auth and not self._bearer_token:
+             logger.warning("No credentials for fetching tweet text.")
+             return None
+             
+        url = f"https://api.twitter.com/2/tweets/{tweet_id}"
+        params = {"tweet.fields": "text"}
+        
+        try:
+            # Prefer Bearer token for read-only if available, else OAuth1
+            auth = None
+            headers = {}
+            if self._bearer_token:
+                headers["Authorization"] = f"Bearer {self._bearer_token}"
+            elif self._oauth1_auth:
+                auth = self._oauth1_auth
+                
+            response = self._session.get(url, params=params, auth=auth, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("data", {}).get("text")
+            else:
+                logger.warning(f"Failed to fetch tweet {tweet_id}: {response.status_code} {response.text}")
+                return None
+        except Exception as e:
+            logger.error(f"Error fetching tweet {tweet_id}: {e}")
+            return None
+
+    def evaluate_note(self, tweet_id: str, note_text: str) -> Dict[str, Any]:
+        """
+        Calls the official evaluate_note endpoint (Practice Mode).
+        """
+        # Note: The actual endpoint URL might vary. We'll assume a standard one or use a configured one.
+        # For this lab, we might need to assume it's available or mock it if strictly not present.
+        # The user said "evaluate_note API endpoint". We'll assume it's at /2/notes/evaluate or similar.
+        # If not configured, we'll try to use the submit_url base but change the endpoint.
+        # User-specified configuration:
+        # URL: https://api.x.com/2/evaluate_note
+        # Auth: Bearer Token (X_BEARER_TOKEN)
+        # Payload: {"note_text": ..., "post_id": ...}
+
+        # 1) Explicit override
+        configured_url = getattr(settings, "x_evaluate_note_url", None)
+
+        ordered_candidates = [
+            "https://api.x.com/2/evaluate_note",
+            "https://api.twitter.com/2/evaluate_note"
+        ]
+        
+        # Add others as fallback
+        if configured_url:
+            ordered_candidates.append(configured_url.rstrip("/"))
+            
+        # Payload as specified
+        payload = {
+            "note_text": note_text,
+            "post_id": tweet_id,
+        }
+
+        # Build auth attempts: try bearer first (as per docs), then OAuth1 if present.
+        auth_attempts: list[dict[str, Any]] = []
+        if self._bearer_token:
+            auth_attempts.append({"auth": None, "headers": {"Authorization": f"Bearer {self._bearer_token}"}, "label": "bearer"})
+        if self._oauth1_auth:
+            auth_attempts.append({"auth": self._oauth1_auth, "headers": {}, "label": "oauth1"})
+        
+        if not auth_attempts:
+             raise RuntimeError("X credentials required for evaluate_note (Bearer or OAuth1).")
+
+        errors: list[str] = []
+        for evaluate_url in ordered_candidates:
+            try:
+                for attempt in auth_attempts:
+                    response = self._session.post(
+                        evaluate_url,
+                        json=payload,
+                        auth=attempt["auth"],
+                        headers=attempt["headers"],
+                        timeout=30
+                    )
+                    if response.status_code == 404:
+                        # Try next endpoint; 404 is often a product/host mismatch.
+                        errors.append(f"{evaluate_url} ({attempt['label']}) → 404")
+                        break
+                    if response.status_code in (401, 403) and attempt is not auth_attempts[-1]:
+                        # Try the next auth mode before failing the endpoint.
+                        errors.append(f"{evaluate_url} ({attempt['label']}) → {response.status_code}")
+                        continue
+                    response.raise_for_status()
+                    return response.json()
+            except requests.HTTPError:
+                # For non-404 errors, bail out immediately to surface the real failure.
+                raise
+            except Exception as e:  # pragma: no cover - defensive network handling
+                errors.append(f"{evaluate_url} → {e}")
+                continue
+
+        raise requests.HTTPError(
+            f"All evaluate_note endpoints failed. Tried: {', '.join(errors) or 'none'}"
+        )

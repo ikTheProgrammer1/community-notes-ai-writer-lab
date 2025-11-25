@@ -129,6 +129,9 @@ class NoteScore(Base):
     )
 
     claim_opinion_score: Mapped[float] = mapped_column(Float, nullable=False)
+    url_validity_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    harassment_abuse_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    
     url_pass: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     # Optional raw evaluation payload, e.g. from official evaluate_note

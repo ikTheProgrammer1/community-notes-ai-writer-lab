@@ -10,8 +10,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import get_session
-from .models import Note, WriterConfig
+from .models import Note, WriterConfig, NoteScore
 from .simulator import BridgeRankSimulator
+from .grok_client import GrokClient
+from .x_client import XClient
+from .admission_engine import AdmissionEngine
+from .config import settings
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -28,104 +32,110 @@ def simulator_home(request: Request):
 @app.post("/simulator/run", response_class=HTMLResponse)
 def simulator_run(
     request: Request,
-    tweet_text: str = Form(...),
+    tweet_url: str = Form(None),
+    tweet_text: str = Form(None), # Fallback or for manual entry
     note_text: str = Form(None),
+    action: str = Form("check"), # check (practice) or submit (exam)
+    fix_mode: bool = Form(False),
+    failure_reasons: str = Form(None),
     session: Session = Depends(get_session)
 ):
-    from .grok_client import GrokClient
-    from .researcher import GroundingClient
-    from .models import Tweet, Note
-    
-    # Create a dummy tweet object
-    tweet = Tweet(tweet_id="sim_tweet", text=tweet_text)
-    
-    grok = GrokClient()
-    simulator = BridgeRankSimulator(session, grok_client=grok)
-    
-    candidate_notes = []
-    
-    # Ensure writer exists
-    writer = session.scalars(select(WriterConfig)).first()
-    if not writer:
-         writer = WriterConfig(name="Simulator User", prompt="Default")
-         session.add(writer)
-         session.flush()
+    try:
+        # Get Writer (simplified)
+        writer = session.query(WriterConfig).first()
+        if not writer:
+            writer = WriterConfig(
+                name="Default Writer",
+                prompt="You are a Community Notes writer. Write clear, neutral, fact-based notes."
+            )
+            session.add(writer)
+            session.commit()
 
-    # Ensure tweet exists in DB for FK
-    db_tweet = session.scalar(select(Tweet).where(Tweet.tweet_id == "sim_tweet"))
-    if not db_tweet:
-        db_tweet = Tweet(tweet_id="sim_tweet", text=tweet_text)
-        session.add(db_tweet)
-    else:
-        # Update text if it changed
-        db_tweet.text = tweet_text
-    session.flush()
+        # Initialize Engine
+        grok = GrokClient(api_key=settings.grok_api_key)
+        x_client = XClient()
+        engine = AdmissionEngine(session, grok_client=grok, x_client=x_client)
 
-    if note_text:
-        # User provided a specific note draft
+        # 1. Handle Input (URL vs Text)
+        tweet_id = "sim_tweet"
+        current_tweet_text = tweet_text or "No text provided"
+        
+        if tweet_url:
+            extracted_id = x_client.extract_tweet_id(tweet_url)
+            if extracted_id:
+                tweet_id = extracted_id
+                # Try to fetch text if not provided
+                if not tweet_text:
+                    fetched_text = x_client.fetch_tweet_text(tweet_id)
+                    if fetched_text:
+                        current_tweet_text = fetched_text
+        
+        # 2. Handle Fix Mode (if triggered from results page)
+        current_note_text = note_text
+        fixed_message = None
+        
+        if fix_mode and failure_reasons:
+            reasons_list = failure_reasons.split(",")
+            # Create temp note for fixing
+            temp_note = Note(text=note_text, writer_id=writer.id, tweet_id=tweet_id)
+            current_note_text = engine.fix_note(temp_note, reasons_list)
+            fixed_message = f"Note auto-fixed by agents: {', '.join(reasons_list)}"
+
+        # Create/Update Note
         draft_note = Note(
             writer_id=writer.id,
-            tweet_id="sim_tweet",
+            tweet_id=tweet_id,
             stage="draft",
-            text=note_text
+            text=current_note_text
         )
         session.add(draft_note)
         session.flush()
         
-        simulation_run = simulator.run_simulation(draft_note)
+        result = {}
         
-        candidate_notes.append({
-            "note": draft_note,
-            "score": simulation_run.bridge_score,
-            "run": simulation_run
-        })
+        if action == "submit":
+            # Exam Mode
+            result = engine.submit_final(draft_note, tweet_id=tweet_id)
+        else:
+            # Practice Mode (default)
+            result = engine.run_practice(draft_note, tweet_id=tweet_id)
         
-    else:
-        # Legacy/Variant Mode (if note_text is missing)
-        variants = grok.generate_note_variants(tweet)
-        if not variants:
-            variants = [{"strategy": "Default", "text": "Could not generate variants."}]
-            
-        for variant in variants:
-            text = variant.get("text", "")
-            draft_note = Note(
-                writer_id=writer.id,
-                tweet_id="sim_tweet",
-                stage="draft",
-                text=text
+        # Save Score (if applicable)
+        scores = result.get("scores", {})
+        if scores:
+             note_score = NoteScore(
+                note_id=draft_note.id,
+                claim_opinion_score=scores.get("claim_opinion_score", 0.0),
+                url_validity_score=scores.get("url_validity_score", 0.0),
+                harassment_abuse_score=scores.get("harassment_abuse_score", 0.0),
+                url_pass=result["passed"],
+                raw_payload=result.get("raw_response")
             )
-            session.add(draft_note)
-            session.flush()
-            
-            simulation_run = simulator.run_simulation(draft_note)
-            
-            candidate_notes.append({
-                "note": draft_note,
-                "score": simulation_run.bridge_score,
-                "run": simulation_run
-            })
-            
-    # Always refine the best (or only) note to show improvements
-    candidate_notes.sort(key=lambda x: x["score"], reverse=True)
-    best_original = candidate_notes[0]
-    
-    refined_note = simulator.run_refiner(best_original["note"], best_original["run"])
-    refined_run = simulator.run_simulation(refined_note)
-    
-    return templates.TemplateResponse(
-        "simulation_result.html",
-        {
-            "request": request,
-            "tweet_text": tweet_text,
-            "original_note": best_original["note"].text,
-            "bridge_score": best_original["score"],
-            "consensus_status": best_original["run"].consensus_status,
-            "feedbacks": best_original["run"].persona_feedbacks,
-            
-            "refined_note": refined_note.text,
-            "refined_score": refined_run.bridge_score,
-            "refined_feedbacks": refined_run.persona_feedbacks
-        }
-    )
-    
-
+             session.add(note_score)
+             session.commit()
+        
+        return templates.TemplateResponse(
+            "simulation_result.html",
+            {
+                "request": request,
+                "tweet_url": tweet_url,
+                "tweet_text": current_tweet_text,
+                "note_text": current_note_text,
+                "result": result,
+                "fixed_message": fixed_message,
+                "tweet_id": tweet_id,
+                "error": result.get("error") # Pass error if present in result
+            }
+        )
+    except Exception as e:
+        return templates.TemplateResponse(
+            "simulation_result.html",
+            {
+                "request": request,
+                "tweet_url": tweet_url,
+                "tweet_text": tweet_text or "Error",
+                "note_text": note_text or "Error",
+                "error": str(e),
+                "result": {"passed": False, "scores": {}, "failure_reasons": ["System Error"], "mode": "error"}
+            }
+        )

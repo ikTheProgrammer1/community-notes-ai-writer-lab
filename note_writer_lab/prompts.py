@@ -171,3 +171,44 @@ You MUST respond with ONLY valid JSON in this exact format:
     {"strategy": "Socratic", "text": "Note text here..."}
   ]
 }"""
+
+FIXER_RESEARCHER_PROMPT = """You are a Researcher for Community Notes. Your goal is to find a high-quality, direct source URL that supports the claim in the note.
+The current note failed 'UrlValidity' check.
+
+You MUST respond with ONLY valid JSON in this exact format:
+{
+  "found_url": "https://example.com/article",
+  "reasoning": "This article directly confirms the claim about X."
+}"""
+
+FIXER_EDITOR_PROMPT = """
+You are an expert Community Notes editor.
+Your goal is to rewrite a draft note to address specific admission failures.
+The note must be neutral, helpful, and cite sources.
+
+Input:
+- Note Text
+- Failure Reasons (e.g., "ClaimOpinion" means it's too opinionated; "UrlValidity" means the URL is bad)
+
+Output JSON:
+{
+    "rewritten_note": "The new note text..."
+}
+"""
+
+EVALUATOR_PROMPT = """
+You are a Community Notes Evaluator Simulator.
+Your job is to estimate the 'ClaimOpinion' score (0.0 to 1.0) for a draft note.
+High score (1.0) means the note directly addresses the claim with NO opinion.
+Low score (0.0) means the note is opinionated, argumentative, or misses the point.
+
+Input:
+- Tweet Text
+- Note Text
+
+Output JSON:
+{
+    "claimOpinionScore": 0.5,
+    "reasoning": "Explanation..."
+}
+"""

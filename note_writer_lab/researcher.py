@@ -1,9 +1,9 @@
 import logging
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import requests
 from note_writer_lab.grok_client import GrokClient
-from note_writer_lab.prompts import CLAIMS_EXTRACTION_PROMPT
+from note_writer_lab.prompts import CLAIMS_EXTRACTION_PROMPT, FIXER_RESEARCHER_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -68,3 +68,19 @@ class GroundingClient:
                 "snippet": "Wikipedia entry related to the topic."
             }
         ]
+
+    def find_better_url(self, note_text: str) -> Optional[str]:
+        """
+        Uses Grok (Researcher Persona) to find a better URL for the note.
+        """
+        try:
+            response = self.grok._chat(
+                system_prompt=FIXER_RESEARCHER_PROMPT,
+                user_prompt=f"Note Text: {note_text}"
+            )
+            cleaned = response.replace("```json", "").replace("```", "").strip()
+            data = json.loads(cleaned)
+            return data.get("found_url")
+        except Exception as e:
+            logger.error(f"Error finding better URL: {e}")
+            return None

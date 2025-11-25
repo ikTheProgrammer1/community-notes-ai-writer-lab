@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-import httpx
+from xai_sdk import Client
+from xai_sdk.chat import user, system
 
 from .config import settings
 from .models import Tweet, WriterConfig
@@ -10,52 +11,35 @@ from .models import Tweet, WriterConfig
 
 class GrokClient:
     """
-    Minimal client for calling Grok / xAI.
-
-    The default payload is compatible with OpenAI-style chat completions APIs.
-    Adjust GROK_API_URL / GROK_MODEL or the payload shape as needed.
+    Client for calling Grok / xAI using the official xai-sdk.
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        api_url: Optional[str] = None,
         model: Optional[str] = None,
     ) -> None:
         self.api_key = api_key or settings.grok_api_key
-        self.api_url = api_url or settings.grok_api_url
-        self.model = model or settings.grok_model
+        self.model = model or settings.grok_model or "grok-4-fast-reasoning"
 
         if not self.api_key:
             raise RuntimeError("GROK_API_KEY is required for GrokClient.")
 
-        # Use a plain client and always POST to the full api_url so we match
-        # the curl example exactly (no extra trailing slash, etc.).
-        self._client = httpx.Client(
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            timeout=60.0,
+        # Use official xAI SDK
+        self._client = Client(
+            api_key=self.api_key,
+            timeout=60,  # 60 second timeout for reasoning models
         )
 
     def _chat(self, system_prompt: str, user_prompt: str) -> str:
-        payload: Dict[str, Any] = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        }
-        response = self._client.post(self.api_url, json=payload)
-        response.raise_for_status()
-        data = response.json()
-
-        # OpenAI-style response shape
         try:
-            return data["choices"][0]["message"]["content"]
-        except Exception as exc:  # pragma: no cover - defensive
-            raise RuntimeError(f"Unexpected Grok response: {data}") from exc
+            chat = self._client.chat.create(model=self.model)
+            chat.append(system(system_prompt))
+            chat.append(user(user_prompt))
+            response = chat.sample()
+            return response.content
+        except Exception as exc:
+            raise RuntimeError(f"Grok API Error: {exc}") from exc
 
     def build_note_prompt(self, tweet: Tweet, writer: WriterConfig) -> str:
         return writer.prompt.format(

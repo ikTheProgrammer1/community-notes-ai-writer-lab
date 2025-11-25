@@ -3,16 +3,17 @@
 {% block content %}
 <div class="simulator-container">
     <div class="hero-section">
-        <h1 class="gradient-text">BridgeRank Simulator</h1>
-        <p class="subtitle">Test your notes against the Council of diverse perspectives.</p>
+        <h1 class="gradient-text">Admission Workbench</h1>
+        <p class="subtitle">Fast-track your notes into Community Notes with real-time API feedback.</p>
     </div>
 
     <div class="input-section">
         <form action="/simulator/run" method="post" class="sim-form">
             <div class="form-group">
-                <label for="tweet_text">The Tweet (Claim)</label>
-                <textarea name="tweet_text" id="tweet_text" rows="3" placeholder="Paste the tweet or claim here..."
-                    required></textarea>
+                <label for="tweet_url">Tweet URL</label>
+                <input type="url" name="tweet_url" id="tweet_url" placeholder="https://x.com/username/status/..."
+                    required>
+                <!-- Hidden fallback for text if needed, or just remove -->
             </div>
 
             <div class="form-group">
@@ -22,14 +23,14 @@
             </div>
 
             <div class="form-actions">
-                <button type="submit" id="run_btn" class="btn btn-primary" disabled>
-                    Run Simulation
+                <button type="submit" name="action" value="check" id="run_btn" class="btn btn-primary" disabled>
+                    Check Draft (Practice)
                 </button>
             </div>
         </form>
 
         <script>
-            const tweetInput = document.getElementById('tweet_text');
+            const tweetInput = document.getElementById('tweet_url');
             const noteInput = document.getElementById('note_text');
             const runBtn = document.getElementById('run_btn');
 
@@ -50,7 +51,7 @@
             // Loading state
             document.querySelector('form').addEventListener('submit', function () {
                 runBtn.disabled = true;
-                runBtn.innerHTML = `Running Simulation...`;
+                runBtn.innerHTML = `Checking Draft...`;
                 runBtn.style.opacity = '0.7';
             });
         </script>
