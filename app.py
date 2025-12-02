@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import time
+import time
 from note_writer_lab.analytics import HistoryEngine
-from note_writer_lab.intel import ThreatEngine
+from note_writer_lab.intel import ThreatDetector
 
 # --- Step 1: Configuration & Styling (The "Terminal" Vibe) ---
 st.set_page_config(layout="wide", page_title="⚔️ War Room")
@@ -93,22 +94,26 @@ st.markdown("""
 # Initialize Session State
 if 'target_url' not in st.session_state:
     st.session_state.target_url = ""
+if 'target_text' not in st.session_state:
+    st.session_state.target_text = ""
 if 'admission_status' not in st.session_state:
     st.session_state.admission_status = "idle" # idle, checking, results
 if 'admission_scores' not in st.session_state:
     st.session_state.admission_scores = {}
+if 'previous_simulation' not in st.session_state:
+    st.session_state.previous_simulation = False
 
 # Initialize Engines (Cached)
 @st.cache_resource
 def get_history_engine():
     return HistoryEngine()
 
-@st.cache_resource
-def get_threat_engine():
-    return ThreatEngine()
+# @st.cache_resource
+def get_threat_detector():
+    return ThreatDetector()
 
 history = get_history_engine()
-threat_engine = get_threat_engine()
+threat_detector = get_threat_detector()
 
 # --- Step 2: The "Setup" Sidebar (Configuration) ---
 with st.sidebar:
@@ -118,6 +123,9 @@ with st.sidebar:
     key_topics = st.multiselect("Key Topics", ["Inflation", "Border", "Taxes", "Healthcare"], default=["Inflation", "Border"])
     
     st.divider()
+    # Simulation Mode Toggle
+    use_simulation = st.toggle("🔌 Simulation Mode", value=False, help="Force mock data generation.")
+    
     st.markdown("**SYSTEM STATUS**")
     st.markdown("🟢 ONLINE")
     st.markdown("**THREAT LEVEL**")
@@ -137,8 +145,9 @@ share_vol = narrative_share.get("share_volume", 0)
 # For now, let's query a known high-volume domain from the dataset to show it working, e.g., "cnn.com" or "foxnews.com"
 # Or better, let's just use the opponent handle as a proxy for "Source" if they are a media outlet, 
 # but since they are a senator, let's query a generic domain like "twitter.com" or just show 0 if not found.
-toxicity_data = history.get_source_toxicity("dailymail.co.uk") # Hardcoded for demo as requested in prompt
-toxicity_score = toxicity_data.get("toxicity_score", 0.0) * 100
+toxicity_data = history.get_source_trust_score("dailymail.co.uk") # Hardcoded for demo as requested in prompt
+# Trust Score is % Helpful. Toxicity is inverse of Trust (roughly).
+toxicity_score = (1.0 - toxicity_data.get("trust_score", 0.0)) * 100
 
 col1, col2, col3 = st.columns(3)
 
@@ -173,11 +182,64 @@ with col3:
 st.markdown("---")
 
 # --- Step 4 & 5: Battlefield & Weapon Panes ---
-cols = st.columns([2, 1])
-
 # Fetch Real Threats
 # We use the key topics as keywords
-threats_df = threat_engine.get_open_goals(keywords=key_topics)
+if 'threats_data' not in st.session_state:
+    st.session_state.threats_data = []
+
+# Add a Refresh Button to force update
+refresh_clicked = st.sidebar.button("🔄 Refresh Intel")
+
+# Logic to trigger "Live Activity" (Spinner + Toasts)
+# Trigger if: 
+# 1. Simulation Mode just toggled ON (False -> True)
+# 2. Refresh Button clicked AND Simulation Mode is ON
+trigger_live_activity = False
+if use_simulation and not st.session_state.previous_simulation:
+    trigger_live_activity = True
+elif use_simulation and refresh_clicked:
+    trigger_live_activity = True
+
+# Update previous state
+st.session_state.previous_simulation = use_simulation
+
+if trigger_live_activity:
+    with st.spinner("Intercepting Hostile Communications..."):
+        time.sleep(1.5) # Simulate network delay
+    
+    # Fetch new data
+    st.session_state.threats_data = threat_detector.fetch_threats(keywords=key_topics, force_simulation=use_simulation)
+    
+    # Show Toasts
+    st.toast("⚠️ New High-Velocity Narrative Detected: 'Inflation'", icon="🚨")
+    time.sleep(0.5)
+    st.toast("📉 Narrative Control dropping in Swing States...", icon="📉")
+
+elif refresh_clicked: # Refresh clicked in Live Mode
+     st.session_state.threats_data = threat_detector.fetch_threats(keywords=key_topics, force_simulation=use_simulation)
+     st.rerun()
+
+# Initial Load (if empty)
+if not st.session_state.threats_data:
+    st.session_state.threats_data = threat_detector.fetch_threats(keywords=key_topics, force_simulation=use_simulation)
+
+threats_data = st.session_state.threats_data
+
+# Convert to DataFrame for UI
+if threats_data:
+    threats_df = pd.DataFrame([{
+        "Source": t["author"],
+        "Tweet Text": t["text"],
+        "Status": "Unchallenged ❌", # Default status
+        "Views": t["formatted_views"], # Text: "2.5M"
+        "Virality": t["metrics"]["views"], # Int: For Progress Bar
+        "URL": t["url"]
+    } for t in threats_data])
+else:
+    threats_df = pd.DataFrame(columns=["Source", "Tweet Text", "Status", "Views", "Virality", "URL"])
+
+# --- Step 4 & 5: Battlefield & Weapon Panes ---
+cols = st.columns([2, 1])
 
 with cols[0]:
     st.subheader("🔥 Active Threats")
@@ -188,39 +250,93 @@ with cols[0]:
         # Create the Dataframe with a selection event
         event = st.dataframe(
             threats_df,
+            column_config={
+                "Source": st.column_config.TextColumn("Source", width="small"),
+                "Tweet Text": st.column_config.TextColumn("Tweet Text", width="large"),
+                "Status": st.column_config.TextColumn("Status", width="small"),
+                "Views": st.column_config.TextColumn("Views", width="small"),
+                "Virality": st.column_config.ProgressColumn(
+                    "Heat",
+                    help="Relative Virality",
+                    format=" ", # Attempt to hide text
+                    min_value=0,
+                    max_value=2500000,
+                    width="small"
+                ),
+                "URL": st.column_config.LinkColumn("Link", display_text="🔗 View Source"),
+            },
             on_select="rerun",  # Rerun the app when clicked
             selection_mode="single-row",
             hide_index=True,
-            use_container_width=True
+            use_container_width=True,
+            key="threats_table"
         )
 
         # Handle the Selection
         if len(event.selection.rows) > 0:
             row_idx = event.selection.rows[0]
             selected_url = threats_df.iloc[row_idx]["URL"]
+            selected_text = threats_df.iloc[row_idx]["Tweet Text"]
             
             # Only update if changed to avoid loops
             if st.session_state.target_url != selected_url:
                 st.session_state.target_url = selected_url
+                st.session_state.target_text = selected_text
                 st.session_state.admission_status = "idle" # Reset status on new target
                 st.rerun()
 
 with cols[1]:
     st.subheader("Tactical Response")
     
+    # Target Context Display
+    if st.session_state.get("target_text"):
+        st.info(f"🎯 **Target Context:**\n\n_{st.session_state.target_text}_")
+    
     # --- Step 5: The "Weapon" Pane ---
     # Input linked to session state
-    target_url = st.text_input("Target URL", value=st.session_state.target_url, key="url_input")
+    # We use key="target_url" to bind directly to the session state variable
+    # This ensures updates from the dataframe selection are reflected here
+    st.text_input("Target URL", key="target_url")
     
-    # Update session state if user types manually
-    if target_url != st.session_state.target_url:
-        st.session_state.target_url = target_url
+    # --- Agent Logic (Must run before widget rendering to update state) ---
+    if st.session_state.get("auto_fix_triggered"):
+        with st.spinner("AI FIXER AGENT REWRITING..."):
+            # Lazy load agent to avoid startup cost if not used
+            from note_writer_lab.agents import FixerAgent
+            fixer = FixerAgent()
+            
+            # Get critique from admission scores if available
+            critique = ""
+            if st.session_state.admission_scores.get("ClaimOpinion", 1.0) < 0.5:
+                critique += "Claim Opinion score is too low. Ensure the note is neutral and cites sources. "
+            if st.session_state.admission_scores.get("HarassmentAbuse", 1.0) < 0.8:
+                critique += "Toxicity detected. Remove any attacking language. "
+                
+            new_draft = fixer.fix_note(st.session_state.get("draft_input", ""), critique=critique)
+            
+            # Update session state for the widget
+            st.session_state.draft_input = new_draft
+            st.session_state.draft_content = new_draft
+            st.session_state.auto_fix_triggered = False
+            
+            # Rerun to show the new state
+            st.rerun()
+
+    # --- Draft Input ---
+    st.markdown("### 3. Draft Note")
     
-    # Bind draft text to session state so agents can update it
-    if 'draft_content' not in st.session_state:
+    # Initialize if not present
+    if "draft_input" not in st.session_state:
+        st.session_state.draft_input = ""
+    if "draft_content" not in st.session_state:
         st.session_state.draft_content = ""
-        
-    draft_text = st.text_area("Draft Counter-Note", value=st.session_state.draft_content, height=150, placeholder="Draft your Community Note here...", key="draft_input")
+
+    draft_text = st.text_area(
+        "Your Note",
+        height=150,
+        placeholder="Enter your note here...",
+        key="draft_input"
+    )
     
     # Sync manual edits back to session state variable we use for logic
     if draft_text != st.session_state.draft_content:
@@ -291,29 +407,7 @@ with cols[1]:
         st.success("NOTE DEPLOYED TO NETWORK.")
 
     # --- Agent Integration ---
-    if st.session_state.get("auto_fix_triggered"):
-        with st.spinner("AI FIXER AGENT REWRITING..."):
-            # Lazy load agent to avoid startup cost if not used
-            from note_writer_lab.agents import FixerAgent
-            fixer = FixerAgent()
-            
-            # Get critique from admission scores if available
-            critique = ""
-            if st.session_state.admission_scores.get("ClaimOpinion", 1.0) < 0.5:
-                critique += "Claim Opinion score is too low. Ensure the note is neutral and cites sources. "
-            if st.session_state.admission_scores.get("HarassmentAbuse", 1.0) < 0.8:
-                critique += "Toxicity detected. Remove any attacking language. "
-                
-            new_draft = fixer.fix_note(draft_text, critique=critique)
-            st.session_state.auto_fix_triggered = False
-            # Update the text area (requires rerun or session state trick)
-            # Streamlit text_area doesn't update from code easily unless we use key
-            # We used key="url_input" for url, let's assume we need one for draft too
-            # But wait, we didn't set a key for draft_text in the original code.
-            # Let's just show the new draft and ask user to copy or use a session state key approach.
-            # Better: Use st.session_state to store draft.
-            st.session_state.draft_content = new_draft
-            st.rerun()
+    # Logic moved to top of Weapon Pane to handle state updates correctly
 
 # Initialize draft content in session state if not present
 if 'draft_content' not in st.session_state:

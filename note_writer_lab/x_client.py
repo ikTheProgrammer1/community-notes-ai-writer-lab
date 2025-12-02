@@ -220,6 +220,61 @@ class XClient:
 
         return True
 
+    def search_tweets(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+        """
+        Search for recent tweets matching a query.
+        Uses the /2/tweets/search/recent endpoint.
+        """
+        url = "https://api.twitter.com/2/tweets/search/recent"
+        
+        # Build query: exclude retweets and replies to get original content
+        # Also ensure we get metrics and author info
+        safe_query = f"{query} -is:retweet -is:reply lang:en"
+        
+        params = {
+            "query": safe_query,
+            "max_results": max_results,
+            "tweet.fields": "created_at,public_metrics,author_id",
+            "expansions": "author_id",
+            "user.fields": "username,name,verified"
+        }
+        
+        try:
+            # Prefer Bearer token for search if available
+            auth = None
+            headers = {}
+            if self._bearer_token:
+                headers["Authorization"] = f"Bearer {self._bearer_token}"
+            elif self._oauth1_auth:
+                auth = self._oauth1_auth
+            else:
+                raise RuntimeError("No credentials for search.")
+
+            response = self._session.get(url, params=params, auth=auth, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                tweets = data.get("data", [])
+                includes = data.get("includes", {})
+                users = {u["id"]: u for u in includes.get("users", [])}
+                
+                # Enrich tweets with user info
+                enriched_tweets = []
+                for t in tweets:
+                    author_id = t.get("author_id")
+                    if author_id and author_id in users:
+                        t["author"] = users[author_id]
+                    enriched_tweets.append(t)
+                    
+                return enriched_tweets
+            else:
+                logger.warning(f"Search failed: {response.status_code} {response.text}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error searching tweets: {e}")
+            return []
+
     def fetch_eligible_tweets(self, max_results: int = 20) -> List[Dict[str, Any]]:
         """
         Fetch posts that are currently eligible for Community Notes.
@@ -457,6 +512,7 @@ class XClient:
         # User-specified configuration:
         # URL: https://api.x.com/2/evaluate_note
         # Auth: Bearer Token (X_BEARER_TOKEN)
+        self._bearer_token = os.getenv("X_BEARER_TOKEN") or os.getenv("X_API_BEARER_TOKEN")
         # Payload: {"note_text": ..., "post_id": ...}
 
         # 1) Explicit override
